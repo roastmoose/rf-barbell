@@ -1,0 +1,104 @@
+---
+title: "A forest of Random Barbells"
+author: "Alexander Spray"
+date: "Sunday, June 05, 2016"
+output: html_document
+---
+
+We're working on a weight lifting excercise dataset, with samples from 5 users using exhibiting
+each "class" of activity (defined as either correctly executing the excercise, classe=A, or 
+some vaiation on incorrectly executing the excercise, classe!=A) of accelerometer data from various
+motion sensing devices. The aim is to create a classifier which accurately identifies in what
+class the activity is given the motion sensor data.
+
+First off we notice that there are several variables with NAs in the training data.
+
+```{r}
+trainDat<-read.csv("C:\\Users\\Alexander\\Downloads\\pml-training.csv")
+testDat<-read.csv("C:\\Users\\Alexander\\Downloads\\pml-testing.csv")
+nrow(trainDat)-nrow(trainDat[which(complete.cases(trainDat)),])
+```
+
+But, there's no real point to keep any variables (aside from out outcome) that aren't in our test
+dataset, which solves our problem since many of the variables are NA only in the test. Beyond this 
+we can note that the fist several variables are
+broadly categorical (names, timestamps etc). And can be removed (indeed, the first plot shows that
+the outcome is sorted by rownum, if we keep X we will certainly overfit)
+
+```{r,echo=FALSE}
+testData <- testDat[,colSums(is.na(testDat))<nrow(testDat)]
+trainDat <- trainDat[,colSums(is.na(testDat))<nrow(testDat)]
+```
+
+```{r}
+plot(trainDat$X,trainDat$classe)
+head(names(trainDat),10)
+```
+
+We are left with 53 predictors, which would seem to be too many to plot effectively. Instead, we will
+attempt to restrict our input columns via variable importance as defined by a naive default random
+forest on the dataset
+
+
+Below we can see the confusion matrix of our Trained Model (first pass with all variables). And the
+order and importance of the variables in the dataset. For the final model and below 8 fold cross
+validation, we will use only the 20 most important variables.
+```{r,warning=FALSE,echo=FALSE}
+library(randomForest)
+library(caret)
+#first several columns seem obviously immaterial
+defModel<-randomForest(classe~.,data=trainDat[,8:60])
+prediction<-predict(defModel)
+reference<-trainDat$classe
+confusionMatrix(prediction,reference)
+
+#predict(defModel,newdata=testData[,8:59])
+
+#try just cutting out some low importance variables
+imp<-varImp(defModel)
+threshold<-imp[order(-imp$Overall),][20]
+topVars<-rownames(imp)[which(imp$Overall>=threshold)]
+
+
+par(las=2) # make label text perpendicular to axis
+par(mar=c(5,8,4,2)) # increase y-axis margin.
+barplot(imp$Overall[order(imp$Overall)],names.arg=rownames(imp)[order(imp$Overall)],horiz=TRUE,cex.names=0.5)
+```
+
+These top 20 variables have the highest variable importance per this random forest. We will
+procede with 8 fold cross validation to examine the out of sample error using a random forest trained
+from only these 20 variables. Leave one out would take
+a very long time with this large a dataset, especially when fitting a random forest. (in sample 
+accuracy appears very high. Let's hope we've avoided overfit). Here I've set mtry = 10, and ntrees=100
+based generally on some tiny grid search. But the default specification works well as well.
+
+```{r}
+#let's go 8 fold
+ptm<-proc.time()
+correctList<-c()
+for(i in 1:8){
+    myVars<-c("user_name","classe",topVars)
+    #take the accuracy
+    #inum<-nrow(trainDat)/8
+    #mySeq<-c(((i-1)*inum+1):((i)*inum))
+    #randomSamples?
+    mySeq<-sample(trainDat$X,nrow(trainDat)/8)
+    myTest<-trainDat[mySeq,which(names(trainDat)%in%myVars)]
+    myTrain<-trainDat[-mySeq,which(names(trainDat)%in%myVars)]
+    myModel<-randomForest(classe~.,data=myTrain,mtry=10,ntree=100)
+    myPred<-predict(myModel,newdata=myTest[,1:(ncol(myTest)-1)])
+    correctList<-c(correctList,confusionMatrix(myPred,myTest$classe)$overall[[1]])
+}
+correctList
+```
+
+Our mean expected accuracy:
+```{r, echo=FALSE}
+print("Mean:")
+mean(correctList)
+print("Standard Deviation")
+sd(correctList)
+```
+
+That's all she wrote. As has been stated in the class, randomForests is one of the best out of the 
+box classifiers. It seems at least to have lived up to the hype.
